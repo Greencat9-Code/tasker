@@ -229,3 +229,21 @@ code.k { background: var(--bg3); padding: 1px 5px; border-radius: 4px; font-size
 .cal-chip.ghost { opacity: .5; border-left-style: dashed; cursor: pointer; }
 .cal-chip.gcal { background: transparent; border: 1px solid var(--line); border-left: 3px solid var(--muted); color: var(--muted); cursor: default; }
 .week-block.gcal { background: var(--bg2); border: 1px dashed var(--line); opacity: .85; cursor: default; }
+
+/* ---------- centering on wide screens ---------- */
+.topbar .brand { flex: 1; }
+.topbar .spacer { display: none; }
+.topbar .sync { flex: 1; justify-content: flex-end; }
+.board-head { justify-content: center; }
+.board-head .horizon-chips { border-left: 1px solid var(--line); padding-left: 8px; }
+.columns-outer { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; }
+.columns { width: max-content; min-width: 100%; height: 100%; justify-content: center; overflow: visible; flex: none; }
+.today { margin: 0 auto; }
+.settings { margin: 0 auto; }
+.cal { width: 100%; max-width: 1700px; margin: 0 auto; }
+@media (max-width: 760px) {
+  .board-head { justify-content: flex-start; }
+  .columns-outer { scroll-snap-type: x mandatory; }
+  .columns { scroll-snap-type: none; justify-content: flex-start; }
+}
+@media (min-width: 761px) { .main { scrollbar-gutter: stable both-edges; } }

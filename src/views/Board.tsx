@@ -87,16 +87,18 @@ export default function Board({ categoryId }: { categoryId: string }) {
           ))}
         </div>
         {cat && (
-          <div className="chips" style={{ marginLeft: 'auto' }}>
+          <div className="chips horizon-chips">
             {HORIZONS.map(h => <button key={h.id} className={`chip ${hzFilter.includes(h.id) ? 'active' : ''}`} onClick={() => toggleHz(h.id)}>{h.name}</button>)}
           </div>
         )}
       </div>
       <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActive(null)}>
-        <div className="columns">
-          {columns.map(col => (
-            <ColumnView key={col.id} col={col} mode={mode} cat={cat} list={cards[col.id]} tasks={tasks} />
-          ))}
+        <div className="columns-outer">
+          <div className="columns">
+            {columns.map(col => (
+              <ColumnView key={col.id} col={col} mode={mode} cat={cat} list={cards[col.id]} tasks={tasks} />
+            ))}
+          </div>
         </div>
         <DragOverlay dropAnimation={null}>
           {active ? <CardView task={active} mode={mode} overlay /> : null}
