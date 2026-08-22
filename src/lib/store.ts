@@ -2,7 +2,7 @@
 import { useSyncExternalStore } from 'react';
 import { GitHub, GitHubError } from './github';
 import { kvGet, kvSet, kvClear } from './idb';
-import { Config, DEFAULT_CONFIG, Task, blankTask, nowIso, parseConfig, parseTask, serializeConfig, serializeTask, newId } from './model';
+import { CalEvent, Config, DEFAULT_CONFIG, Task, blankTask, nowIso, parseConfig, parseTask, serializeConfig, serializeTask, newId } from './model';
 
 export interface Settings {
   token: string; owner: string; repo: string; branch: string;
@@ -18,19 +18,21 @@ export interface State {
   settings: Settings | null;
   config: Config;
   tasks: Record<string, Task>;
+  events: CalEvent[];          // read-only external calendar overlay
   sync: SyncInfo;
 }
 
 interface Op { path: string; kind: 'put' | 'del'; content?: string; message: string }
-interface Persisted { config: Config; tasks: Record<string, Task>; files: Record<string, string>; pending: Op[]; headSha: string | null }
+interface Persisted { config: Config; tasks: Record<string, Task>; events?: CalEvent[]; files: Record<string, string>; pending: Op[]; headSha: string | null }
 
 const CONFIG_PATH = 'tasker.json';
+const EVENTS_PATH = 'calendar/events.json';
 const SETTINGS_KEY = 'tasker.settings';
 
 type Listener = () => void;
 
 class Store {
-  state: State = { ready: false, settings: null, config: DEFAULT_CONFIG, tasks: {}, sync: { status: 'unconfigured', pending: 0 } };
+  state: State = { ready: false, settings: null, config: DEFAULT_CONFIG, tasks: {}, events: [], sync: { status: 'unconfigured', pending: 0 } };
   private files: Record<string, string> = {};
   private pending: Op[] = [];
   private headSha: string | null = null;
@@ -64,7 +66,9 @@ class Store {
     this.emit({
       ready: true, settings,
       config: persisted?.config ?? DEFAULT_CONFIG,
-      tasks: persisted?.tasks ?? {},
+      // fill in fields added after the cache was written (e.g. repeat / completions)
+      tasks: Object.fromEntries(Object.entries(persisted?.tasks ?? {}).map(([id, t]) => [id, { ...blankTask({ title: t.title }), ...t, completions: t.completions || 0, repeat: t.repeat ?? null, blocks: t.blocks ?? [], tags: t.tags ?? [], links: t.links ?? [] }])),
+      events: persisted?.events ?? [],
       sync: { status: settings?.local ? 'local' : settings ? 'idle' : 'unconfigured', pending: this.pending.length },
     });
     if (settings?.local) { this.pending = []; }
@@ -141,7 +145,7 @@ class Store {
     if (this.persistTimer) return;
     this.persistTimer = window.setTimeout(() => {
       this.persistTimer = null;
-      const p: Persisted = { config: this.state.config, tasks: this.state.tasks, files: this.files, pending: this.pending, headSha: this.headSha };
+      const p: Persisted = { config: this.state.config, tasks: this.state.tasks, events: this.state.events, files: this.files, pending: this.pending, headSha: this.headSha };
       kvSet('state', p).catch(e => console.warn('persist failed', e));
     }, 300);
   }
@@ -161,7 +165,7 @@ class Store {
         this.setSync({ status: 'syncing' });
         const head = await gh.headSha();
         if (!force && head === this.headSha) { this.setSync({ status: 'idle', lastPull: Date.now(), error: undefined }); return; }
-        const tree = (await gh.tree(head)).filter(e => (e.path.startsWith('tasks/') && e.path.endsWith('.md')) || e.path === CONFIG_PATH);
+        const tree = (await gh.tree(head)).filter(e => (e.path.startsWith('tasks/') && e.path.endsWith('.md')) || e.path === CONFIG_PATH || e.path === EVENTS_PATH);
         const pendingPaths = new Set(this.pending.map(o => o.path));
         const changed = tree.filter(e => this.files[e.path] !== e.sha && !pendingPaths.has(e.path));
         const fetched: { path: string; text: string }[] = [];
@@ -171,8 +175,10 @@ class Store {
         }));
         const tasks = { ...this.state.tasks };
         let config = this.state.config;
+        let events = this.state.events;
         for (const f of fetched) {
           if (f.path === CONFIG_PATH) { config = parseConfig(f.text); continue; }
+          if (f.path === EVENTS_PATH) { try { const j = JSON.parse(f.text); events = Array.isArray(j.events) ? j.events : []; } catch { /* keep old */ } continue; }
           const t = parseTask(f.path, f.text);
           if (t) {
             // a task id can only live in one file; drop stale duplicates (e.g. after a rename)
@@ -186,7 +192,8 @@ class Store {
         for (const e of tree) files[e.path] = e.sha;
         this.files = files;
         this.headSha = head;
-        this.emit({ tasks, config });
+        if (!treePaths.has(EVENTS_PATH)) events = [];
+        this.emit({ tasks, config, events });
         this.setSync({ status: 'idle', lastPull: Date.now(), error: undefined });
         this.persist();
       } catch (e: any) {

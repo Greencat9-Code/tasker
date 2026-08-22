@@ -1,7 +1,57 @@
 // Higher-level task operations that encode the stage / horizon / done rules.
-import { Horizon, Task, Template, TemplateNode, doneStageOf, nowIso, newId } from './model';
+import { Horizon, Repeat, Task, Template, TemplateNode, doneStageOf, nowIso, newId } from './model';
 import { store } from './store';
 import { Tasks, childrenOf, effectiveCategory, orderBetween, rootOf } from './rollup';
+import { addDays, daysBetween, parseDate, toDateStr, today } from './dates';
+
+// ---------- recurrence ----------
+export function addInterval(date: string, r: Repeat): string {
+  if (r.unit === 'day') return addDays(date, r.every);
+  if (r.unit === 'week') return addDays(date, 7 * r.every);
+  const d = parseDate(date); const day = d.getDate();
+  d.setDate(1); d.setMonth(d.getMonth() + r.every);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, last));
+  return toDateStr(d);
+}
+/** Dates for the next occurrence of a recurring task (from today). */
+export function nextOccurrenceDates(t: Task, from = today()): { soft: string | null; hard: string | null } {
+  const r = t.repeat!;
+  const primary = t.hard ?? t.soft;
+  if (!primary) return { soft: addInterval(from, r), hard: null };
+  let next = addInterval(r.anchor === 'completion' ? from : primary, r);
+  let guard = 0;
+  while (next <= from && guard++ < 500) next = addInterval(next, r);
+  const delta = daysBetween(primary, next);
+  return { soft: t.soft ? addDays(t.soft, delta) : null, hard: t.hard ? addDays(t.hard, delta) : null };
+}
+/** Future occurrences of the primary date inside [from, to] (for calendar previews). */
+export function occurrencesBetween(t: Task, from: string, to: string, max = 24): string[] {
+  const primary = t.hard ?? t.soft;
+  if (!t.repeat || !primary) return [];
+  const out: string[] = [];
+  let d = addInterval(primary, t.repeat);
+  let guard = 0;
+  while (d <= to && guard++ < 1000) { if (d >= from) { out.push(d); if (out.length >= max) break; } d = addInterval(d, t.repeat); }
+  return out;
+}
+/** Completing a recurring task rolls it forward instead of finishing it. */
+export function rollForward(id: string) {
+  const t = st().tasks[id]; if (!t || !t.repeat) return;
+  const { soft, hard } = nextOccurrenceDates(t);
+  const c = cat(t); const first = c?.stages[0]?.id ?? null; const ds = doneStageOf(c);
+  const patches: { id: string; patch: Partial<Task> }[] = [{ id, patch: {
+    soft, hard, done: false, completed: null, completions: (t.completions || 0) + 1,
+    stage: t.stage ? (t.parent || t.stage === ds ? first : t.stage) : null,
+    counter: t.counter ? { ...t.counter, done: 0 } : null,
+    blocks: t.blocks.filter(b => b.start.slice(0, 10) >= today()),
+    horizon: !t.parent && t.horizon === 'done' ? 'now' : t.horizon,
+  } }];
+  for (const d of descendantsOf(st().tasks, id)) {
+    patches.push({ id: d.id, patch: { done: false, completed: null, stage: d.stage ? first : null, counter: d.counter ? { ...d.counter, done: 0 } : null } });
+  }
+  store.updateMany(patches, `Recur: ${t.title} → ${hard ?? soft}`);
+}
 
 function st() { return store.state; }
 function cat(t: Task) { return effectiveCategory(st().tasks, st().config, t); }
@@ -20,6 +70,7 @@ function lastOrder(tasks: Tasks, parent: string | null): number {
 export function moveToHorizon(id: string, horizon: Horizon, slot?: Slot) {
   const t = st().tasks[id]; if (!t) return;
   const c = cat(t); const ds = doneStageOf(c);
+  if (horizon === 'done' && t.repeat) { rollForward(id); return; }
   const patch: Partial<Task> = { horizon };
   const o = orderFor(slot); if (o !== undefined) patch.order = o;
   if (horizon === 'done') {
@@ -36,6 +87,7 @@ export function moveToHorizon(id: string, horizon: Horizon, slot?: Slot) {
 export function moveToStage(id: string, stageId: string, slot?: Slot) {
   const t = st().tasks[id]; if (!t) return;
   const c = cat(t); const ds = doneStageOf(c);
+  if (stageId === ds && t.repeat) { rollForward(id); return; }
   const patch: Partial<Task> = { stage: stageId };
   const o = orderFor(slot); if (o !== undefined) patch.order = o;
   if (!t.parent) {
@@ -50,6 +102,7 @@ export function moveToStage(id: string, stageId: string, slot?: Slot) {
 
 export function setDone(id: string, done: boolean) {
   const t = st().tasks[id]; if (!t) return;
+  if (done && t.repeat) { rollForward(id); return; }
   const c = cat(t); const ds = doneStageOf(c);
   if (!t.parent) { moveToHorizon(id, done ? 'done' : 'now'); return; }
   if (t.stage && c && ds) { moveToStage(id, done ? ds : c.stages[0].id); return; }

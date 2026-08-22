@@ -8,10 +8,11 @@ import { CatBadge, DatePills, Empty, ProgressBar, StageBar } from '../components
 import { addDays, fmtTime, today } from '../lib/dates';
 
 export default function Today() {
-  const { config, tasks } = useStore();
+  const { config, tasks, events } = useStore();
   const t = today();
   const week = addDays(t, 7);
   const [shuffle, setShuffle] = useState(0);
+  const todayEvents = useMemo(() => events.filter(ev => ev.start.slice(0, 10) <= t && ev.end.slice(0, 10) >= t && (ev.allDay || ev.start.slice(0, 10) === t)).sort((a, b) => (a.allDay ? '0' : a.start).localeCompare(b.allDay ? '0' : b.start)), [events, t]);
 
   const data = useMemo(() => {
     const all = Object.values(tasks);
@@ -55,8 +56,18 @@ export default function Today() {
       <div className="panel wide">
         <div className="flex gap"><h2>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
           <span className="muted small">{data.now.length} active · {data.onDeck.length} on deck · {data.pocket.length} in the back pocket</span></div>
-        {empty && <div className="muted">Nothing due or scheduled today. Pick something from Now, or promote an idea.</div>}
+        {empty && !todayEvents.length && <div className="muted">Nothing due or scheduled today. Pick something from Now, or promote an idea.</div>}
         {data.blocks.length > 0 && <div className="list">{data.blocks.map(({ task, block }) => <Item key={block.id} task={task} sub={`${fmtTime(block.start)} – ${fmtTime(block.end)}`} />)}</div>}
+        {todayEvents.length > 0 && (
+          <div className="list">
+            {todayEvents.map(ev => (
+              <div className="list-item" key={ev.id} style={{ cursor: 'default' }} title={ev.cal}>
+                <i className="dot" style={{ background: ev.color ?? 'var(--muted)' }} />
+                <div className="t"><div>{ev.title}</div><div className="sub">{ev.allDay ? 'all day' : `${fmtTime(ev.start)} – ${fmtTime(ev.end)}`}{ev.location ? ` · ${ev.location}` : ''} · {ev.cal}</div></div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {data.inbox.length > 0 && (

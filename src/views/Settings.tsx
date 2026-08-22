@@ -13,9 +13,11 @@ export default function Settings() {
       <Connection />
       {state.settings && <>
         <Notifications />
+        <GoogleCalendar />
         <Categories />
         <Templates />
         <ModDeck />
+        <Obsidian />
         <DataTools />
       </>}
     </div>
@@ -221,6 +223,47 @@ function ModDeck() {
       <div className="muted small">Pulls every challenge / multiplayer mod from ModDeck (127.0.0.1:6767) into MC YouTube as a Back Pocket idea with the Video production subtasks. Only works on the PC running ModDeck. {linked} mod tasks linked so far.</div>
       <div className="flex gap"><button className="btn" onClick={sync} disabled={busy}>{busy ? 'Syncing…' : 'Sync from ModDeck'}</button></div>
       {msg && <div className="banner">{msg}</div>}
+    </div>
+  );
+}
+
+function GoogleCalendar() {
+  const { events, settings } = useStore();
+  const [msg, setMsg] = useState<string | null>(null);
+  const cals = [...new Set(events.map(e => e.cal))];
+  const refresh = async () => {
+    setMsg(null);
+    try { const gh = store.github; if (!gh) throw new Error('Connect GitHub first.'); await gh.dispatchWorkflow('notify.yml', { mode: 'gcal' }); setMsg('Refresh requested — the overlay updates within a minute or two (then pull).'); }
+    catch (e: any) { setMsg(e?.message ?? String(e)); }
+  };
+  return (
+    <div className="panel">
+      <h2>Google Calendar overlay</h2>
+      <div className="muted small">
+        Read-only: your Google events show on the Calendar and Today views so you can see free time next to your deadlines. The hourly workflow in the data repo fetches each calendar's
+        <b> secret iCal address</b> (Google Calendar → Settings → pick a calendar → <i>Integrate calendar</i> → "Secret address in iCal format") and writes <code className="k">calendar/events.json</code>.
+        Nothing leaves GitHub; the addresses are stored as the repo secret <code className="k">GCAL_ICS_URLS</code> — one per line, optionally <code className="k">Name|#color|url</code>. Set it with:
+      </div>
+      <pre className="md" style={{ margin: 0 }}><code>gh secret set GCAL_ICS_URLS -R {settings?.owner || 'Greencat9-Code'}/{settings?.repo || 'tasker-data'}</code></pre>
+      <div className="flex gap wrap">
+        <button className="btn" onClick={refresh} disabled={!settings || settings.local}>Refresh overlay now</button>
+        <span className="muted small">{events.length ? `${events.length} events from ${cals.join(', ')}` : 'No events loaded yet.'}</span>
+      </div>
+      {msg && <div className="banner">{msg}</div>}
+    </div>
+  );
+}
+
+function Obsidian() {
+  return (
+    <div className="panel">
+      <h2>Obsidian</h2>
+      <div className="muted small">
+        Every task is a markdown note, so the data repo can live inside your vault: a clone at <code className="k">…\Nicholas' Giga Vault\Tasker</code> makes tasks editable in Obsidian (and via Obsidian Sync on the phone).
+        <code className="k">C:\Users\nicho\Tasker\tools\vault-sync.cmd</code> commits vault edits, pulls what the app wrote and pushes — run it on a schedule (every 5 min) so both directions stay current.
+        New notes dropped into <code className="k">Tasker/tasks/</code> without frontmatter show up in the Inbox (title = first heading or file name); the app adds the frontmatter on first edit.
+        Frontmatter keys worth knowing: <code className="k">soft</code>, <code className="k">hard</code> (YYYY-MM-DD), <code className="k">horizon</code>, <code className="k">stage</code>, <code className="k">tags</code>, <code className="k">repeat</code>.
+      </div>
     </div>
   );
 }

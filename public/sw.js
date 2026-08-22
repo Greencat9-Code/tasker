@@ -18,6 +18,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;            // GitHub API etc: always network
+  if (/\/(src|node_modules|@vite|@react-refresh)\b/.test(url.pathname) || url.pathname.endsWith('/seed.json')) return;   // dev server modules: never cache
 
   // Navigations: network first, fall back to cached shell so the app opens offline.
   if (req.mode === 'navigate') {

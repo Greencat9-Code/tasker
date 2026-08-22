@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { marked } from 'marked';
 import { store, useStore } from '../lib/store';
-import { HORIZONS, Horizon, Task, Template, doneStageOf } from '../lib/model';
+import { HORIZONS, Horizon, Repeat, RepeatUnit, Task, Template, doneStageOf } from '../lib/model';
 import { ancestors, childrenOf, countLeaves, effectiveCategory, hasChildren, isDone, progressOf, stageBreakdown } from '../lib/rollup';
-import { addBlock, bumpCounter, createChild, moveToHorizon, moveToStage, removeBlock, reorderWithin, reparent, setCategory, setDone, stampTemplate, updateBlock } from '../lib/actions';
+import { addBlock, bumpCounter, createChild, moveToHorizon, moveToStage, nextOccurrenceDates, removeBlock, reorderWithin, reparent, setCategory, setDone, stampTemplate, updateBlock } from '../lib/actions';
 import { openTask } from '../lib/nav';
 import { CatBadge, DatePills, Menu, ProgressBar, StageBar } from '../components/ui';
 import { addMinutes, fmtDate, fmtTime, today } from '../lib/dates';
@@ -61,6 +61,7 @@ export default function TaskDetail({ id, onClose }: { id: string; onClose: () =>
           <Menu items={[
             ...(t.parent ? [{ label: 'Make top-level task', onClick: () => reparent(t.id, null) }] : []),
             { label: t.stage ? 'Stop tracking in pipeline' : 'Track in pipeline', onClick: () => store.updateTask(t.id, { stage: t.stage ? null : (cat?.stages[0]?.id ?? null) }), disabled: isRoot },
+            ...(t.repeat ? [{ label: 'Complete for good (stop repeating)', onClick: () => { store.updateTask(t.id, { repeat: null }); setTimeout(() => setDone(t.id, true), 0); } }] : []),
             { label: 'Copy repo path', onClick: () => navigator.clipboard?.writeText(t.path) },
             { label: 'Delete', onClick: del, danger: true },
           ]} />
@@ -106,7 +107,8 @@ export default function TaskDetail({ id, onClose }: { id: string; onClose: () =>
               <input type="date" value={t.hard ?? ''} onChange={e => store.updateTask(t.id, { hard: e.target.value || null })} />
             </div>
           </div>
-          <div className="flex gap wrap"><DatePills task={t} done={done} /></div>
+          <div className="flex gap wrap"><DatePills task={t} done={done} />{t.repeat && <span className="pill" title="Recurring">↻ every {t.repeat.every > 1 ? `${t.repeat.every} ${t.repeat.unit}s` : t.repeat.unit}{t.completions ? ` · done ${t.completions}×` : ''}</span>}</div>
+          <RepeatField task={t} />
 
           {(prog || breakdown.length > 0) && (
             <div className="col" style={{ gap: 8 }}>
@@ -214,6 +216,57 @@ function AddRow({ parentId, defaultTpl, templates, onTemplate }: { parentId: str
           </select>
         )}
       </div>
+    </div>
+  );
+}
+
+function RepeatField({ task }: { task: Task }) {
+  const r = task.repeat;
+  const preset = !r ? 'none' : r.every === 1 && r.unit === 'day' ? 'daily' : r.every === 1 && r.unit === 'week' ? 'weekly' : r.every === 2 && r.unit === 'week' ? 'biweekly' : r.every === 1 && r.unit === 'month' ? 'monthly' : 'custom';
+  const set = (next: Repeat | null) => store.updateTask(task.id, { repeat: next }, `Repeat: ${task.title}`);
+  const choose = (v: string) => {
+    const anchor = r?.anchor ?? 'due';
+    if (v === 'none') set(null);
+    else if (v === 'daily') set({ every: 1, unit: 'day', anchor });
+    else if (v === 'weekly') set({ every: 1, unit: 'week', anchor });
+    else if (v === 'biweekly') set({ every: 2, unit: 'week', anchor });
+    else if (v === 'monthly') set({ every: 1, unit: 'month', anchor });
+    else set({ every: r?.every ?? 3, unit: r?.unit ?? 'day', anchor });
+  };
+  const next = r ? nextOccurrenceDates(task) : null;
+  return (
+    <div className="col" style={{ gap: 6 }}>
+      <div className="flex gap wrap">
+        <div className="field"><label>Repeat</label>
+          <select value={preset} onChange={e => choose(e.target.value)}>
+            <option value="none">Does not repeat</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Every 2 weeks</option>
+            <option value="monthly">Monthly</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        {r && preset === 'custom' && (
+          <div className="field"><label>Every</label>
+            <div className="flex gap">
+              <input type="number" min={1} style={{ width: 64 }} value={r.every} onChange={e => set({ ...r, every: Math.max(1, Number(e.target.value) || 1) })} />
+              <select value={r.unit} onChange={e => set({ ...r, unit: e.target.value as RepeatUnit })}>
+                <option value="day">days</option><option value="week">weeks</option><option value="month">months</option>
+              </select>
+            </div>
+          </div>
+        )}
+        {r && (
+          <div className="field"><label>Next from</label>
+            <select value={r.anchor} onChange={e => set({ ...r, anchor: e.target.value as Repeat['anchor'] })}>
+              <option value="due">the due date</option>
+              <option value="completion">when I complete it</option>
+            </select>
+          </div>
+        )}
+      </div>
+      {r && <div className="muted small">Completing this rolls it forward{next?.hard || next?.soft ? ` to ${fmtDate(next.hard ?? next.soft)}` : ''} and resets its subtasks and counters. Use the ⋯ menu to complete it for good.</div>}
     </div>
   );
 }

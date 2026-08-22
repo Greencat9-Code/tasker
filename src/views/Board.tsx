@@ -154,6 +154,7 @@ export function CardView({ task, mode, overlay }: { task: Task; mode: 'horizon' 
         {mode === 'stage' && hz && task.horizon !== 'now' && <span className="pill horizon">{hz.name}</span>}
         <DatePills task={task} done={done} />
         {task.counter && <span className="pill">{task.counter.done}/{task.counter.target}</span>}
+        {task.repeat && <span className="pill" title={`Repeats every ${task.repeat.every} ${task.repeat.unit}(s)`}>↻{task.completions ? ` ${task.completions}` : ''}</span>}
         {leaves && <span className="pill">{leaves.total - leaves.open}/{leaves.total} ✓</span>}
       </div>
       {breakdown.length > 0 ? <div style={{ marginTop: 8 }}><StageBar parts={breakdown} /></div> : prog ? <ProgressBar pct={prog.pct} color={cat?.color} /> : null}

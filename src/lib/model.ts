@@ -34,6 +34,11 @@ export interface Config {
 export interface Block { id: string; start: string; end: string }   // local 'YYYY-MM-DDTHH:mm'
 export interface Link { label: string; url: string }
 export interface Counter { done: number; target: number }
+export type RepeatUnit = 'day' | 'week' | 'month';
+/** Recurrence: when completed, the task rolls forward instead of finishing. anchor 'due' = next from the due date, 'completion' = next from today. */
+export interface Repeat { every: number; unit: RepeatUnit; anchor: 'due' | 'completion' }
+/** Read-only external calendar event (from calendar/events.json, written by the gcal workflow). */
+export interface CalEvent { id: string; cal: string; color?: string; title: string; start: string; end: string; allDay: boolean; location?: string }
 
 export interface Task {
   id: string;
@@ -50,6 +55,8 @@ export interface Task {
   done: boolean;
   completed: string | null;
   counter: Counter | null;
+  repeat: Repeat | null;        // recurring: completing rolls the dates forward
+  completions: number;          // how many times a recurring task has been completed
   tags: string[];
   links: Link[];
   template: string | null;      // template id used by "+ Add" on this node
@@ -113,7 +120,7 @@ export function blankTask(partial: Partial<Task> & { title: string }): Task {
   const base: Task = {
     id, path: partial.path ?? taskPath(partial.title, id), title: partial.title,
     category: null, stage: null, horizon: 'back-pocket', parent: null, order: 0,
-    soft: null, hard: null, blocks: [], done: false, completed: null, counter: null,
+    soft: null, hard: null, blocks: [], done: false, completed: null, counter: null, repeat: null, completions: 0,
     tags: [], links: [], template: null, source: null,
     created: nowIso(), updated: nowIso(), notes: '',
   };
@@ -125,18 +132,30 @@ const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
 export function parseTask(path: string, text: string): Task | null {
   const m = text.match(FM_RE);
-  if (!m) return null;
-  let fm: any;
-  try { fm = yaml.load(m[1], { schema: yaml.JSON_SCHEMA }) ?? {}; } catch { return null; }
-  if (!fm || typeof fm !== 'object') return null;
+  let fm: any = {};
+  let body = text;
+  if (m) {
+    try { fm = yaml.load(m[1], { schema: yaml.JSON_SCHEMA }) ?? {}; } catch { return null; }
+    if (!fm || typeof fm !== 'object') return null;
+    body = m[2];
+  }
+  const fileName = path.replace(/^tasks\//, '').replace(/\.md$/, '');
   const idFromPath = path.match(/-([a-z0-9]{6,12})\.md$/)?.[1];
-  const id = String(fm.id ?? idFromPath ?? '');
-  if (!id) return null;
+  // notes created by hand / in Obsidian have no id: derive a stable one from the file name
+  const id = String(fm.id ?? idFromPath ?? ('f-' + fileName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)));
+  if (!id || id === 'f-') return null;
   const str = (v: any) => (v === undefined || v === null || v === '' ? null : String(v));
   const hz = String(fm.horizon ?? 'back-pocket') as Horizon;
+  const headingTitle = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  const units: RepeatUnit[] = ['day', 'week', 'month'];
+  const repeat: Repeat | null = fm.repeat && typeof fm.repeat === 'object' && units.includes(fm.repeat.unit)
+    ? { every: Math.max(1, Number(fm.repeat.every) || 1), unit: fm.repeat.unit, anchor: fm.repeat.anchor === 'completion' ? 'completion' : 'due' }
+    : null;
   return {
     id, path,
-    title: String(fm.title ?? path.replace(/^tasks\//, '').replace(/\.md$/, '')),
+    title: String(fm.title ?? headingTitle ?? fileName),
+    repeat,
+    completions: Number(fm.completions) || 0,
     category: str(fm.category),
     stage: str(fm.stage),
     horizon: (HORIZON_IDS as string[]).includes(hz) ? hz : 'back-pocket',
@@ -159,7 +178,7 @@ export function parseTask(path: string, text: string): Task | null {
     source: str(fm.source),
     created: str(fm.created) ?? nowIso(),
     updated: str(fm.updated) ?? nowIso(),
-    notes: m[2].replace(/^\r?\n/, ''),
+    notes: body.replace(/^\r?\n/, ''),
   };
 }
 
@@ -176,6 +195,8 @@ export function serializeTask(t: Task): string {
   if (t.done) fm.done = true;
   if (t.completed) fm.completed = t.completed;
   if (t.counter) fm.counter = t.counter;
+  if (t.repeat) fm.repeat = t.repeat;
+  if (t.completions) fm.completions = t.completions;
   if (t.tags.length) fm.tags = t.tags;
   if (t.links.length) fm.links = t.links;
   if (t.template) fm.template = t.template;

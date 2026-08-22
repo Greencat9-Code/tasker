@@ -1,26 +1,43 @@
 import React, { useMemo, useState } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors, pointerWithin } from '@dnd-kit/core';
 import { store, useStore } from '../lib/store';
-import { Block, Task } from '../lib/model';
+import { Block, CalEvent, Task } from '../lib/model';
 import { effectiveCategory, isDone, rootOf } from '../lib/rollup';
-import { addBlock, updateBlock } from '../lib/actions';
+import { addBlock, occurrencesBetween, updateBlock } from '../lib/actions';
 import { go, openTask, useRoute } from '../lib/nav';
 import { CatBadge, DatePills } from '../components/ui';
 import { WEEKDAYS, addDays, addMinutes, fmtMonth, fmtTime, monthGrid, pad, parseDate, startOfWeek, toDateStr, today, fmtDate } from '../lib/dates';
 
 type DropMode = 'block' | 'soft' | 'hard';
-interface Item { kind: 'hard' | 'soft' | 'block'; task: Task; block?: Block; done: boolean }
+interface TaskItem { kind: 'hard' | 'soft' | 'block'; task: Task; block?: Block; done: boolean }
+interface GhostItem { kind: 'ghost'; task: Task; ghost: 'hard' | 'soft'; date: string }
+interface GcalItem { kind: 'gcal'; event: CalEvent; date: string }
+type Item = TaskItem | GhostItem | GcalItem;
+const GCAL_KEY = 'tasker.cal.gcal';
+function sortKey(it: Item): string {
+  if (it.kind === 'block') return '3' + it.block!.start;
+  if (it.kind === 'gcal') return it.event.allDay ? '0' + it.event.title : '3' + it.event.start;
+  if (it.kind === 'hard') return '1'; if (it.kind === 'soft') return '2'; return '4';
+}
 const HOURS = Array.from({ length: 18 }, (_, i) => i + 6);   // 6am .. 11pm
 const HOUR_PX = 44;
 
 export default function Calendar() {
-  const { config, tasks } = useStore();
+  const { config, tasks, events } = useStore();
   const route = useRoute();
   const mode: 'month' | 'week' = route.parts[0] === 'week' ? 'week' : 'month';
   const anchor = route.parts[1] && /^\d{4}-\d{2}-\d{2}$/.test(route.parts[1]) ? route.parts[1] : today();
   const [dropMode, setDropMode] = useState<DropMode>('block');
   const [search, setSearch] = useState('');
   const [active, setActive] = useState<{ label: string; color: string } | null>(null);
+  const [showGcal, setShowGcal] = useState(() => localStorage.getItem(GCAL_KEY) !== '0');
+  const toggleGcal = () => setShowGcal(v => { localStorage.setItem(GCAL_KEY, v ? '0' : '1'); return !v; });
+
+  // visible range (for recurring previews + calendar overlay)
+  const range = useMemo(() => {
+    if (mode === 'week') { const s = startOfWeek(anchor); return { from: s, to: addDays(s, 6) }; }
+    const d = parseDate(anchor); const days = monthGrid(d.getFullYear(), d.getMonth()); return { from: days[0], to: days[days.length - 1] };
+  }, [mode, anchor]);
 
   const byDay = useMemo(() => {
     const m = new Map<string, Item[]>();
@@ -30,10 +47,17 @@ export default function Calendar() {
       if (t.hard) push(t.hard, { kind: 'hard', task: t, done });
       if (t.soft) push(t.soft, { kind: 'soft', task: t, done });
       for (const b of t.blocks) push(b.start.slice(0, 10), { kind: 'block', task: t, block: b, done });
+      if (t.repeat && !done) for (const d of occurrencesBetween(t, range.from, range.to)) push(d, { kind: 'ghost', task: t, ghost: t.hard ? 'hard' : 'soft', date: d });
     }
-    for (const l of m.values()) l.sort((a, b) => (a.kind === 'block' ? a.block!.start : a.kind === 'hard' ? '0' : '1').localeCompare(b.kind === 'block' ? b.block!.start : b.kind === 'hard' ? '0' : '1'));
+    if (showGcal) for (const ev of events) {
+      const s = ev.start.slice(0, 10); const e = ev.allDay ? ev.end.slice(0, 10) : ev.end.slice(0, 10);
+      if (e < range.from || s > range.to) continue;
+      if (ev.allDay) { for (let d = s; d <= e && d <= range.to; d = addDays(d, 1)) if (d >= range.from) push(d, { kind: 'gcal', event: ev, date: d }); }
+      else push(s, { kind: 'gcal', event: ev, date: s });
+    }
+    for (const l of m.values()) l.sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
     return m;
-  }, [tasks, config]);
+  }, [tasks, config, events, showGcal, range]);
 
   const candidates = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -105,6 +129,7 @@ export default function Calendar() {
             <div className="chips">
               <a className={`chip ${mode === 'month' ? 'active' : ''}`} href={`#/calendar/month/${anchor}`}>Month</a>
               <a className={`chip ${mode === 'week' ? 'active' : ''}`} href={`#/calendar/week/${anchor}`}>Week</a>
+              {events.length > 0 && <button className={`chip ${showGcal ? 'active' : ''}`} onClick={toggleGcal} title="Google Calendar overlay (read-only)">📅 Google</button>}
             </div>
           </div>
           {mode === 'month' ? <MonthView anchor={anchor} byDay={byDay} colorOf={colorOf} /> : <WeekView anchor={anchor} byDay={byDay} colorOf={colorOf} />}
@@ -152,6 +177,17 @@ function SideItem({ task }: { task: Task }) {
 }
 
 function Chip({ item, colorOf }: { item: Item; colorOf: (t: Task) => string }) {
+  if (item.kind === 'ghost') {
+    return <div className={`cal-chip ghost ${item.ghost}`} title={`Next occurrence of ${item.task.title} (repeats)`} onClick={() => openTask(item.task.id)}>↻ {item.task.title}</div>;
+  }
+  if (item.kind === 'gcal') {
+    const ev = item.event;
+    return <div className="cal-chip gcal" style={{ borderLeftColor: ev.color }} title={`${ev.cal}: ${ev.title}${ev.location ? ' @ ' + ev.location : ''}`}>{ev.allDay ? '' : fmtTime(ev.start) + ' '}{ev.title}</div>;
+  }
+  return <DragChip item={item} colorOf={colorOf} />;
+}
+
+function DragChip({ item, colorOf }: { item: TaskItem; colorOf: (t: Task) => string }) {
   const id = item.kind === 'block' ? `block:${item.task.id}:${item.block!.id}` : `${item.kind}:${item.task.id}`;
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id });
   const label = item.kind === 'block' ? `${fmtTime(item.block!.start)} ${item.task.title}` : item.task.title;
@@ -202,9 +238,9 @@ function WeekView({ anchor, byDay, colorOf }: { anchor: string; byDay: Map<strin
       <div className="week-head" />
       {days.map(day => <div key={day} className={`week-head ${day === t ? 'today' : ''}`}>{WEEKDAYS[(parseDate(day).getDay() + 6) % 7]} {parseDate(day).getDate()}</div>)}
       <div className="week-allday" />
-      {days.map(day => <AllDay key={day} day={day} items={(byDay.get(day) ?? []).filter(i => i.kind !== 'block')} colorOf={colorOf} />)}
+      {days.map(day => <AllDay key={day} day={day} items={(byDay.get(day) ?? []).filter(i => i.kind !== 'block' && !(i.kind === 'gcal' && !i.event.allDay))} colorOf={colorOf} />)}
       <div>{HOURS.map(h => <div key={h} className="week-time">{h % 12 === 0 ? 12 : h % 12}{h >= 12 ? 'p' : 'a'}</div>)}</div>
-      {days.map(day => <DayColumn key={day} day={day} items={(byDay.get(day) ?? []).filter(i => i.kind === 'block')} colorOf={colorOf} />)}
+      {days.map(day => <DayColumn key={day} day={day} items={(byDay.get(day) ?? []).filter(i => i.kind === 'block' || (i.kind === 'gcal' && !i.event.allDay))} colorOf={colorOf} />)}
     </div>
   );
 }
@@ -218,7 +254,17 @@ function DayColumn({ day, items, colorOf }: { day: string; items: Item[]; colorO
   return (
     <div className="week-col" style={{ height: HOURS.length * HOUR_PX }}>
       {HOURS.map(h => <Slot key={h} id={`slot:${day}T${pad(h)}:00`} />)}
-      {items.map((it, i) => <WeekBlock key={i} item={it} color={colorOf(it.task)} />)}
+      {items.map((it, i) => it.kind === 'gcal' ? <GcalBlock key={i} event={it.event} /> : it.kind === 'block' ? <WeekBlock key={i} item={it} color={colorOf(it.task)} /> : null)}
+    </div>
+  );
+}
+function GcalBlock({ event }: { event: CalEvent }) {
+  const s = parseDate(event.start); const e = parseDate(event.end);
+  const top = ((s.getHours() + s.getMinutes() / 60) - HOURS[0]) * HOUR_PX;
+  const height = Math.max(18, ((e.getTime() - s.getTime()) / 3600000) * HOUR_PX - 2);
+  return (
+    <div className="week-block gcal" style={{ top, height, borderColor: event.color, color: event.color }} title={`${event.cal}: ${event.title}${event.location ? ' @ ' + event.location : ''}`}>
+      <b>{fmtTime(event.start)}</b> {event.title}
     </div>
   );
 }
@@ -226,7 +272,7 @@ function Slot({ id }: { id: string }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return <div ref={setNodeRef} className={`week-hour ${isOver ? 'over' : ''}`} />;
 }
-function WeekBlock({ item, color }: { item: Item; color: string }) {
+function WeekBlock({ item, color }: { item: TaskItem; color: string }) {
   const b = item.block!;
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `block:${item.task.id}:${b.id}` });
   const s = parseDate(b.start); const e = parseDate(b.end);

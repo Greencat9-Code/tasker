@@ -224,3 +224,8 @@ h2 { font-size: 18px; } h3 { font-size: 14px; color: var(--muted); text-transfor
 code.k { background: var(--bg3); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 .banner { background: rgba(242,184,75,.12); border: 1px solid rgba(242,184,75,.35); color: #ffe0a3; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
 .banner.err { background: rgba(255,92,92,.12); border-color: rgba(255,92,92,.35); color: #ffb3b3; }
+
+/* ---------- phase 2: recurring previews + external calendar overlay ---------- */
+.cal-chip.ghost { opacity: .5; border-left-style: dashed; cursor: pointer; }
+.cal-chip.gcal { background: transparent; border: 1px solid var(--line); border-left: 3px solid var(--muted); color: var(--muted); cursor: default; }
+.week-block.gcal { background: var(--bg2); border: 1px dashed var(--line); opacity: .85; cursor: default; }
