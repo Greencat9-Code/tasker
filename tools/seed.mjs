@@ -153,6 +153,7 @@ mkdirSync(join(DATA, 'push'), { recursive: true });
 for (const t of files) writeFileSync(join(DATA, t.path), serializeTask(t));
 writeFileSync(join(DATA, 'tasker.json'), serializeConfig(config));
 writeFileSync(join(DATA, 'push', '.gitkeep'), '');
-// dev-only snapshot for the "Load dev seed.json" button (public/seed.json is gitignored)
-writeFileSync(join(process.cwd(), 'public', 'seed.json'), JSON.stringify({ config, tasks: files }, null, 1));
+// dev-only snapshot for the "Load dev seed.json" button (dev/ is gitignored and never built)
+mkdirSync(join(process.cwd(), 'dev'), { recursive: true });
+writeFileSync(join(process.cwd(), 'dev', 'seed.json'), JSON.stringify({ config, tasks: files }, null, 1));
 console.log(`wrote ${files.length} task files (${files.filter(t => !t.parent).length} top-level, ${families.length} mods from ModDeck)`);
