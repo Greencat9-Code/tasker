@@ -3,6 +3,7 @@ import { store, useStore } from '../lib/store';
 import { Category, Config, Template, newId, slugify } from '../lib/model';
 import { parseOutline, toOutline } from '../lib/templates';
 import { currentSubscription, disablePush, enablePush, isIOS, isStandalone, localTestNotification, pushSupported, sendTestPush } from '../lib/push';
+import { enableNative, isNative, nativePermission, nativeTest } from '../lib/native';
 import { createRoot, stampTemplate } from '../lib/actions';
 import { rootOf } from '../lib/rollup';
 
@@ -74,6 +75,38 @@ function Connection() {
 }
 
 function Notifications() {
+  if (isNative) return <NativeNotifications />;
+  return <WebNotifications />;
+}
+
+function NativeNotifications() {
+  const { config, tasks } = useStore();
+  const [perm, setPerm] = useState<'granted' | 'denied' | 'prompt'>('prompt');
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => { nativePermission().then(setPerm).catch(() => undefined); }, []);
+  const run = async (fn: () => Promise<unknown>, ok: string) => { setMsg(null); try { await fn(); setMsg(ok); setPerm(await nativePermission()); } catch (e: any) { setMsg(e?.message ?? String(e)); } };
+  return (
+    <div className="panel">
+      <h2>Notifications</h2>
+      <div className="muted small">Native app: reminders are scheduled <b>on this device</b> from your tasks every time the app syncs — morning digest, hard-deadline eve reminders, and a heads-up an hour before each work block. No server involved; open the app now and then so the schedule stays fresh.</div>
+      <div className="flex gap wrap">
+        {perm !== 'granted'
+          ? <button className="btn primary" onClick={() => run(async () => { if (!await enableNative(config, tasks)) throw new Error('Permission was not granted — enable notifications for Tasker in iOS Settings.'); }, 'Enabled. Upcoming reminders are scheduled.')}>Enable notifications</button>
+          : <button className="btn" onClick={() => run(nativeTest, 'Test scheduled — arrives in ~5 seconds (leave the app first).')}>Send test in 5s</button>}
+        <span className="muted small">permission: {perm}</span>
+      </div>
+      <div className="flex gap wrap">
+        <span className="small muted">Digest hour</span>
+        <select value={config.digestHour ?? 8} onChange={e => store.setConfig({ ...config, digestHour: Number(e.target.value) })}>
+          {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h % 12 === 0 ? 12 : h % 12}{h >= 12 ? ' pm' : ' am'}</option>)}
+        </select>
+      </div>
+      {msg && <div className="banner">{msg}</div>}
+    </div>
+  );
+}
+
+function WebNotifications() {
   const { config } = useStore();
   const [sub, setSub] = useState<PushSubscription | null>(null);
   const [msg, setMsg] = useState<string | null>(null);

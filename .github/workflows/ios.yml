@@ -1,0 +1,60 @@
+name: iOS build (AltStore IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'ios/**'
+      - 'index.html'
+      - 'public/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - '.github/workflows/ios.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:ios
+      - run: npx cap sync ios
+      - name: Build unsigned app
+        run: |
+          cd ios/App
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO build
+      - name: Package IPA
+        run: |
+          cd ios/App
+          rm -rf Payload Tasker.ipa
+          mkdir Payload
+          cp -R "build/Build/Products/Release-iphoneos/App.app" Payload/
+          zip -qry Tasker.ipa Payload
+          ls -la Tasker.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tasker-ipa
+          path: ios/App/Tasker.ipa
+      - name: Publish at stable release URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create ios --title "Tasker iOS (sideload with AltStore)" \
+            --notes "Unsigned IPA — install with AltStore/SideStore, which signs it with your Apple ID. Rebuilt automatically on every app change." \
+            2>/dev/null || true
+          gh release upload ios ios/App/Tasker.ipa --clobber

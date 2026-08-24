@@ -2,6 +2,7 @@
 import { useSyncExternalStore } from 'react';
 import { GitHub, GitHubError } from './github';
 import { kvGet, kvSet, kvClear } from './idb';
+import { queueNativeReschedule } from './native';
 import { CalEvent, Config, DEFAULT_CONFIG, Task, blankTask, nowIso, parseConfig, parseTask, serializeConfig, serializeTask, newId } from './model';
 
 export interface Settings {
@@ -142,6 +143,7 @@ class Store {
   }
 
   private persist() {
+    queueNativeReschedule(this.state.config, this.state.tasks);
     if (this.persistTimer) return;
     this.persistTimer = window.setTimeout(() => {
       this.persistTimer = null;
