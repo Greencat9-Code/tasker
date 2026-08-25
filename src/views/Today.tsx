@@ -52,7 +52,7 @@ export default function Today() {
   const empty = !data.overdue.length && !data.dueToday.length && !data.slipping.length && !data.blocks.length;
 
   return (
-    <div className="today">
+    <div className="today-view">
       <div className="panel wide">
         <div className="flex gap"><h2>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
           <span className="muted small">{data.now.length} active · {data.onDeck.length} on deck · {data.pocket.length} in the back pocket</span></div>

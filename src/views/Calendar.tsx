@@ -236,7 +236,7 @@ function WeekView({ anchor, byDay, colorOf }: { anchor: string; byDay: Map<strin
   return (
     <div className="week">
       <div className="week-head" />
-      {days.map(day => <div key={day} className={`week-head ${day === t ? 'today' : ''}`}>{WEEKDAYS[(parseDate(day).getDay() + 6) % 7]} {parseDate(day).getDate()}</div>)}
+      {days.map(day => <div key={day} className={`week-head ${day === t ? 'today' : ''}`}>{WEEKDAYS[parseDate(day).getDay()]} {parseDate(day).getDate()}</div>)}
       <div className="week-allday" />
       {days.map(day => <AllDay key={day} day={day} items={(byDay.get(day) ?? []).filter(i => i.kind !== 'block' && !(i.kind === 'gcal' && !i.event.allDay))} colorOf={colorOf} />)}
       <div>{HOURS.map(h => <div key={h} className="week-time">{h % 12 === 0 ? 12 : h % 12}{h >= 12 ? 'p' : 'a'}</div>)}</div>

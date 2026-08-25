@@ -14,7 +14,7 @@ export function addMinutes(s: string, n: number): string { const d = parseDate(s
 export function daysBetween(a: string, b: string): number {
   return Math.round((parseDate(b).getTime() - parseDate(a).getTime()) / 86400000);
 }
-export function startOfWeek(s: string): string { const d = parseDate(s); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return toDateStr(d); }
+export function startOfWeek(s: string): string { const d = parseDate(s); const dow = d.getDay(); d.setDate(d.getDate() - dow); return toDateStr(d); }
 export function monthGrid(year: number, month0: number): string[] {
   const first = new Date(year, month0, 1);
   const start = startOfWeek(toDateStr(first));
@@ -26,7 +26,7 @@ export function monthGrid(year: number, month0: number): string[] {
 }
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export function fmtDate(s: string | null, withYear = false): string {
   if (!s) return '';
   const d = parseDate(s);
