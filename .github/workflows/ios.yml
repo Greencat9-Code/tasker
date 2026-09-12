@@ -37,6 +37,7 @@ jobs:
           cd ios/App
           xcodebuild -project App.xcodeproj -scheme App -configuration Release \
             -destination 'generic/platform=iOS' -derivedDataPath build \
+            MARKETING_VERSION=1.0.${{ github.run_number }} CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO build
       - name: Package IPA
         run: |
@@ -46,6 +47,33 @@ jobs:
           cp -R "build/Build/Products/Release-iphoneos/App.app" Payload/
           zip -qry Tasker.ipa Payload
           ls -la Tasker.ipa
+      - name: Build SideStore/AltStore source.json
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const size = fs.statSync('ios/App/Tasker.ipa').size;
+          const sha256 = require('crypto').createHash('sha256').update(fs.readFileSync('ios/App/Tasker.ipa')).digest('hex');
+          const version = `1.0.${process.env.RUN_NUMBER}`;
+          const date = new Date().toISOString();
+          const downloadURL = 'https://github.com/Greencat9-Code/tasker/releases/download/ios/Tasker.ipa';
+          const ver = { version, date, localizedDescription: 'Automated build from the latest Tasker source.', downloadURL, size, sha256, minOSVersion: '15.0' };
+          const app = {
+            name: 'Tasker', bundleIdentifier: 'com.greencat9.tasker', developerName: 'Greencat9',
+            subtitle: 'Personal planning board',
+            localizedDescription: 'Pipelines + horizons task board, nested subtasks, calendar, budget tracker. Syncs through your private GitHub repo.',
+            iconURL: 'https://greencat9-code.github.io/tasker/icons/icon-512.png',
+            tintColor: '#4f8cff',
+            // legacy single-version fields for older clients
+            version, versionDate: date, versionDescription: ver.localizedDescription, downloadURL, size,
+            versions: [ver],
+            appPermissions: { entitlements: [], privacy: {} },
+          };
+          const source = { name: 'Tasker Source', identifier: 'com.greencat9.tasker.source', apps: [app] };
+          fs.writeFileSync('ios/App/source.json', JSON.stringify(source, null, 2) + '\n');
+          console.log('source.json:', version, size, 'bytes');
+          EOF
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
       - uses: actions/upload-artifact@v4
         with:
           name: Tasker-ipa
@@ -54,7 +82,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create ios --title "Tasker iOS (sideload with AltStore)" \
-            --notes "Unsigned IPA — install with AltStore/SideStore, which signs it with your Apple ID. Rebuilt automatically on every app change." \
+          gh release create ios --title "Tasker iOS (sideload with AltStore/SideStore)" \
+            --notes "Unsigned IPA — install with AltStore or SideStore, which signs it with your Apple ID. SideStore source URL: https://github.com/Greencat9-Code/tasker/releases/download/ios/source.json — rebuilt automatically on every app change." \
             2>/dev/null || true
-          gh release upload ios ios/App/Tasker.ipa --clobber
+          gh release upload ios ios/App/Tasker.ipa ios/App/source.json --clobber
