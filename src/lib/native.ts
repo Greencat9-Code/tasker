@@ -2,9 +2,10 @@
 // whenever it changes. No push server involved — works with a free Apple ID sideload.
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications, LocalNotificationSchema } from '@capacitor/local-notifications';
-import { Config, Task } from './model';
+import { BudgetData, Config, EMPTY_BUDGET, Task } from './model';
 import { Tasks, isDone, rootOf } from './rollup';
 import { addDays, parseDate, today } from './dates';
+import { fmtMoney, upcomingBills } from './budget';
 
 export const isNative = Capacitor.isNativePlatform();
 
@@ -14,10 +15,10 @@ export async function nativePermission(): Promise<'granted' | 'denied' | 'prompt
   return s.display === 'granted' ? 'granted' : s.display === 'denied' ? 'denied' : 'prompt';
 }
 
-export async function enableNative(config: Config, tasks: Tasks): Promise<boolean> {
+export async function enableNative(config: Config, tasks: Tasks, budget: BudgetData = EMPTY_BUDGET): Promise<boolean> {
   const s = await LocalNotifications.requestPermissions();
   if (s.display !== 'granted') return false;
-  await rescheduleNative(config, tasks);
+  await rescheduleNative(config, tasks, budget);
   return true;
 }
 
@@ -43,7 +44,7 @@ function label(tasks: Tasks, t: Task): string {
  * Recompute the pending notification set from current data (call after every sync/change).
  * iOS caps pending local notifications at 64, so we schedule the next 7 days, closest first.
  */
-export async function rescheduleNative(config: Config, tasks: Tasks): Promise<void> {
+export async function rescheduleNative(config: Config, tasks: Tasks, budget: BudgetData = EMPTY_BUDGET): Promise<void> {
   if (!isNative) return;
   if ((await LocalNotifications.checkPermissions()).display !== 'granted') return;
   const pending = await LocalNotifications.getPending();
@@ -54,8 +55,12 @@ export async function rescheduleNative(config: Config, tasks: Tasks): Promise<vo
   const horizon = addDays(t0, 7);
   const list: LocalNotificationSchema[] = [];
   const digestHour = config.digestHour ?? 8;
-  const perDay = new Map<string, { hard: string[]; soft: string[]; blocks: string[] }>();
-  const dayBucket = (d: string) => { let b = perDay.get(d); if (!b) { b = { hard: [], soft: [], blocks: [] }; perDay.set(d, b); } return b; };
+  const perDay = new Map<string, { hard: string[]; soft: string[]; blocks: string[]; bills: string[] }>();
+  const dayBucket = (d: string) => { let b = perDay.get(d); if (!b) { b = { hard: [], soft: [], blocks: [], bills: [] }; perDay.set(d, b); } return b; };
+  for (const bill of upcomingBills(budget, t0, 7, 0)) {
+    if (bill.date > horizon) continue;
+    dayBucket(bill.date).bills.push(`${bill.name} ${fmtMoney(bill.amount)}${bill.autopay ? ' (auto)' : ''}`);
+  }
 
   for (const t of Object.values(tasks)) {
     const done = isDone(tasks, config, t);
@@ -80,6 +85,7 @@ export async function rescheduleNative(config: Config, tasks: Tasks): Promise<vo
     if (b.hard.length) lines.push(`Due: ${b.hard.slice(0, 3).join(', ')}${b.hard.length > 3 ? '…' : ''}`);
     if (b.soft.length) lines.push(`Soft target: ${b.soft.slice(0, 3).join(', ')}${b.soft.length > 3 ? '…' : ''}`);
     if (b.blocks.length) lines.push(`Scheduled: ${b.blocks.slice(0, 3).join(', ')}${b.blocks.length > 3 ? '…' : ''}`);
+    if (b.bills.length) lines.push(`Bills: ${b.bills.slice(0, 4).join(', ')}${b.bills.length > 4 ? '…' : ''}`);
     if (lines.length) list.push({ id: hash(`digest:${d}`), title: 'Tasker · today', body: lines.join('\n'), schedule: { at } });
   }
   list.sort((a, b) => (a.schedule!.at as Date).getTime() - (b.schedule!.at as Date).getTime());
@@ -89,8 +95,8 @@ export async function rescheduleNative(config: Config, tasks: Tasks): Promise<vo
 
 let timer: number | null = null;
 /** Debounced reschedule; safe to call on every store change. */
-export function queueNativeReschedule(config: Config, tasks: Tasks) {
+export function queueNativeReschedule(config: Config, tasks: Tasks, budget: BudgetData = EMPTY_BUDGET) {
   if (!isNative) return;
   if (timer) clearTimeout(timer);
-  timer = window.setTimeout(() => { timer = null; rescheduleNative(config, tasks).catch(e => console.warn('reschedule failed', e)); }, 4000);
+  timer = window.setTimeout(() => { timer = null; rescheduleNative(config, tasks, budget).catch(e => console.warn('reschedule failed', e)); }, 4000);
 }

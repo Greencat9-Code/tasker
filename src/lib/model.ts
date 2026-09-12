@@ -40,6 +40,69 @@ export interface Repeat { every: number; unit: RepeatUnit; anchor: 'due' | 'comp
 /** Read-only external calendar event (from calendar/events.json, written by the gcal workflow). */
 export interface CalEvent { id: string; cal: string; color?: string; title: string; start: string; end: string; allDay: boolean; location?: string }
 
+// ---------- budget ----------
+/** A bill that repeats: monthly on `day`, or yearly on `month`/`day`. Stored in budget/recurring.json. */
+export interface RecurringBill {
+  id: string;
+  name: string;
+  amount: number;
+  cadence: 'monthly' | 'yearly';
+  day: number;              // day of month 1-31 (clamped to the month's length)
+  month?: number;           // 1-12, yearly bills only
+  category?: string;
+  autopay?: boolean;
+  start?: string | null;    // 'YYYY-MM' first month it applies (optional)
+  end?: string | null;      // 'YYYY-MM' last month it applies (optional)
+  notes?: string;
+}
+/** A manual expense or one-time upcoming payment inside one month. */
+export interface BudgetEntry { id: string; name: string; amount: number; date: string | null; paid: boolean; category?: string }
+/** Per-month state, stored as budget/<YYYY-MM>.json (only written once you touch that month). */
+export interface MonthBudget {
+  month: string;            // 'YYYY-MM'
+  income: number | null;
+  entries: BudgetEntry[];
+  /** per-month status/overrides for recurring bills, keyed by RecurringBill id */
+  recurring: Record<string, { paid?: boolean; skipped?: boolean; amount?: number }>;
+}
+export interface BudgetData { recurring: RecurringBill[]; months: Record<string, MonthBudget> }
+export const EMPTY_BUDGET: BudgetData = { recurring: [], months: {} };
+
+export function parseRecurring(text: string): RecurringBill[] {
+  try {
+    const j = JSON.parse(text);
+    const list = Array.isArray(j) ? j : j?.recurring;
+    if (!Array.isArray(list)) return [];
+    return list.filter((b: any) => b && b.id && b.name && Number.isFinite(Number(b.amount))).map((b: any) => ({
+      id: String(b.id), name: String(b.name), amount: Number(b.amount),
+      cadence: b.cadence === 'yearly' ? 'yearly' : 'monthly',
+      day: Math.min(31, Math.max(1, Number(b.day) || 1)),
+      month: b.cadence === 'yearly' ? Math.min(12, Math.max(1, Number(b.month) || 1)) : undefined,
+      category: b.category ? String(b.category) : undefined,
+      autopay: !!b.autopay,
+      start: b.start ? String(b.start) : null, end: b.end ? String(b.end) : null,
+      notes: b.notes ? String(b.notes) : undefined,
+    }));
+  } catch { return []; }
+}
+export function parseMonthBudget(month: string, text: string): MonthBudget {
+  const base: MonthBudget = { month, income: null, entries: [], recurring: {} };
+  try {
+    const j = JSON.parse(text);
+    if (!j || typeof j !== 'object') return base;
+    return {
+      month,
+      income: Number.isFinite(Number(j.income)) && j.income !== null && j.income !== '' ? Number(j.income) : null,
+      entries: Array.isArray(j.entries) ? j.entries.filter((e: any) => e && e.id && e.name && Number.isFinite(Number(e.amount))).map((e: any) => ({
+        id: String(e.id), name: String(e.name), amount: Number(e.amount),
+        date: e.date ? String(e.date) : null, paid: !!e.paid,
+        category: e.category ? String(e.category) : undefined,
+      })) : [],
+      recurring: j.recurring && typeof j.recurring === 'object' ? j.recurring : {},
+    };
+  } catch { return base; }
+}
+
 export interface Task {
   id: string;
   path: string;                 // repo path of the markdown file

@@ -4,6 +4,7 @@ import { go, useRoute, View } from './lib/nav';
 import Board from './views/Board';
 import Calendar from './views/Calendar';
 import Today from './views/Today';
+import Budget from './views/Budget';
 import Settings from './views/Settings';
 import TaskDetail from './views/TaskDetail';
 import { Modal } from './components/ui';
@@ -15,6 +16,7 @@ const NAV: { view: View; label: string; icon: string }[] = [
   { view: 'today', label: 'Today', icon: '☀️' },
   { view: 'board', label: 'Board', icon: '🗂️' },
   { view: 'calendar', label: 'Calendar', icon: '📅' },
+  { view: 'budget', label: 'Budget', icon: '💵' },
   { view: 'settings', label: 'Settings', icon: '⚙️' },
 ];
 
@@ -41,6 +43,7 @@ export default function App() {
         {view === 'today' && <Today />}
         {view === 'board' && <Board categoryId={route.parts[0] ?? 'all'} />}
         {view === 'calendar' && <Calendar />}
+        {view === 'budget' && <Budget month={route.parts[0]} />}
         {view === 'settings' && <Settings />}
       </main>
       <nav className="bottomnav">

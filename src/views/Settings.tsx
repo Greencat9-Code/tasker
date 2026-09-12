@@ -80,7 +80,7 @@ function Notifications() {
 }
 
 function NativeNotifications() {
-  const { config, tasks } = useStore();
+  const { config, tasks, budget } = useStore();
   const [perm, setPerm] = useState<'granted' | 'denied' | 'prompt'>('prompt');
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { nativePermission().then(setPerm).catch(() => undefined); }, []);
@@ -91,7 +91,7 @@ function NativeNotifications() {
       <div className="muted small">Native app: reminders are scheduled <b>on this device</b> from your tasks every time the app syncs — morning digest, hard-deadline eve reminders, and a heads-up an hour before each work block. No server involved; open the app now and then so the schedule stays fresh.</div>
       <div className="flex gap wrap">
         {perm !== 'granted'
-          ? <button className="btn primary" onClick={() => run(async () => { if (!await enableNative(config, tasks)) throw new Error('Permission was not granted — enable notifications for Tasker in iOS Settings.'); }, 'Enabled. Upcoming reminders are scheduled.')}>Enable notifications</button>
+          ? <button className="btn primary" onClick={() => run(async () => { if (!await enableNative(config, tasks, budget)) throw new Error('Permission was not granted — enable notifications for Tasker in iOS Settings.'); }, 'Enabled. Upcoming reminders are scheduled.')}>Enable notifications</button>
           : <button className="btn" onClick={() => run(nativeTest, 'Test scheduled — arrives in ~5 seconds (leave the app first).')}>Send test in 5s</button>}
         <span className="muted small">permission: {perm}</span>
       </div>

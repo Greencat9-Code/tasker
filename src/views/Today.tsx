@@ -5,11 +5,13 @@ import { childrenOf, effectiveCategory, isDone, progressOf, roots, rootOf, stage
 import { moveToHorizon, setCategory } from '../lib/actions';
 import { openTask } from '../lib/nav';
 import { CatBadge, DatePills, Empty, ProgressBar, StageBar } from '../components/ui';
-import { addDays, fmtTime, today } from '../lib/dates';
+import { addDays, fmtDate, fmtTime, today } from '../lib/dates';
+import { fmtMoney, upcomingBills } from '../lib/budget';
 
 export default function Today() {
-  const { config, tasks, events } = useStore();
+  const { config, tasks, events, budget } = useStore();
   const t = today();
+  const bills = useMemo(() => upcomingBills(budget, t, 14, 31), [budget, t]);
   const week = addDays(t, 7);
   const [shuffle, setShuffle] = useState(0);
   const todayEvents = useMemo(() => events.filter(ev => ev.start.slice(0, 10) <= t && ev.end.slice(0, 10) >= t && (ev.allDay || ev.start.slice(0, 10) === t)).sort((a, b) => (a.allDay ? '0' : a.start).localeCompare(b.allDay ? '0' : b.start)), [events, t]);
@@ -99,6 +101,21 @@ export default function Today() {
           <div className="list">{data.slipping.map(x => <Item key={x.id} task={x} />)}</div>
         </div>
       )}
+      {bills.length > 0 && (
+        <div className="panel">
+          <h3>Payments · next 2 weeks</h3>
+          <div className="list">
+            {bills.map(b => (
+              <div className="list-item" key={`${b.date}-${b.key}`} onClick={() => { location.hash = `#/budget/${b.date.slice(0, 7)}`; }}>
+                <span className={`pill ${b.date < t ? 'over' : b.date === t ? 'soon' : ''}`}>{b.date < t ? 'overdue' : b.date === t ? 'today' : fmtDate(b.date)}</span>
+                <div className="t">{b.name}{b.autopay ? <span className="muted small"> · autopay</span> : ''}</div>
+                <b>{fmtMoney(b.amount)}</b>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="panel">
         <h3>Next 7 days</h3>
         {data.upcoming.length ? <div className="list">{data.upcoming.map(x => <Item key={x.id} task={x} />)}</div> : <div className="muted small">No deadlines this week.</div>}

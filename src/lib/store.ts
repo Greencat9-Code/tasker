@@ -3,7 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { GitHub, GitHubError } from './github';
 import { kvGet, kvSet, kvClear } from './idb';
 import { queueNativeReschedule } from './native';
-import { CalEvent, Config, DEFAULT_CONFIG, Task, blankTask, nowIso, parseConfig, parseTask, serializeConfig, serializeTask, newId } from './model';
+import { BudgetData, CalEvent, Config, DEFAULT_CONFIG, EMPTY_BUDGET, MonthBudget, RecurringBill, Task, blankTask, nowIso, parseConfig, parseMonthBudget, parseRecurring, parseTask, serializeConfig, serializeTask, newId } from './model';
 
 export interface Settings {
   token: string; owner: string; repo: string; branch: string;
@@ -20,20 +20,23 @@ export interface State {
   config: Config;
   tasks: Record<string, Task>;
   events: CalEvent[];          // read-only external calendar overlay
+  budget: BudgetData;
   sync: SyncInfo;
 }
 
 interface Op { path: string; kind: 'put' | 'del'; content?: string; message: string }
-interface Persisted { config: Config; tasks: Record<string, Task>; events?: CalEvent[]; files: Record<string, string>; pending: Op[]; headSha: string | null }
+interface Persisted { config: Config; tasks: Record<string, Task>; events?: CalEvent[]; budget?: BudgetData; files: Record<string, string>; pending: Op[]; headSha: string | null }
 
 const CONFIG_PATH = 'tasker.json';
 const EVENTS_PATH = 'calendar/events.json';
+const RECURRING_PATH = 'budget/recurring.json';
+const MONTH_RE = /^budget\/(\d{4}-\d{2})\.json$/;
 const SETTINGS_KEY = 'tasker.settings';
 
 type Listener = () => void;
 
 class Store {
-  state: State = { ready: false, settings: null, config: DEFAULT_CONFIG, tasks: {}, events: [], sync: { status: 'unconfigured', pending: 0 } };
+  state: State = { ready: false, settings: null, config: DEFAULT_CONFIG, tasks: {}, events: [], budget: EMPTY_BUDGET, sync: { status: 'unconfigured', pending: 0 } };
   private files: Record<string, string> = {};
   private pending: Op[] = [];
   private headSha: string | null = null;
@@ -70,6 +73,7 @@ class Store {
       // fill in fields added after the cache was written (e.g. repeat / completions)
       tasks: Object.fromEntries(Object.entries(persisted?.tasks ?? {}).map(([id, t]) => [id, { ...blankTask({ title: t.title }), ...t, completions: t.completions || 0, repeat: t.repeat ?? null, blocks: t.blocks ?? [], tags: t.tags ?? [], links: t.links ?? [] }])),
       events: persisted?.events ?? [],
+      budget: persisted?.budget ?? EMPTY_BUDGET,
       sync: { status: settings?.local ? 'local' : settings ? 'idle' : 'unconfigured', pending: this.pending.length },
     });
     if (settings?.local) { this.pending = []; }
@@ -143,11 +147,11 @@ class Store {
   }
 
   private persist() {
-    queueNativeReschedule(this.state.config, this.state.tasks);
+    queueNativeReschedule(this.state.config, this.state.tasks, this.state.budget);
     if (this.persistTimer) return;
     this.persistTimer = window.setTimeout(() => {
       this.persistTimer = null;
-      const p: Persisted = { config: this.state.config, tasks: this.state.tasks, events: this.state.events, files: this.files, pending: this.pending, headSha: this.headSha };
+      const p: Persisted = { config: this.state.config, tasks: this.state.tasks, events: this.state.events, budget: this.state.budget, files: this.files, pending: this.pending, headSha: this.headSha };
       kvSet('state', p).catch(e => console.warn('persist failed', e));
     }, 300);
   }
@@ -167,7 +171,7 @@ class Store {
         this.setSync({ status: 'syncing' });
         const head = await gh.headSha();
         if (!force && head === this.headSha) { this.setSync({ status: 'idle', lastPull: Date.now(), error: undefined }); return; }
-        const tree = (await gh.tree(head)).filter(e => (e.path.startsWith('tasks/') && e.path.endsWith('.md')) || e.path === CONFIG_PATH || e.path === EVENTS_PATH);
+        const tree = (await gh.tree(head)).filter(e => (e.path.startsWith('tasks/') && e.path.endsWith('.md')) || e.path === CONFIG_PATH || e.path === EVENTS_PATH || e.path === RECURRING_PATH || MONTH_RE.test(e.path));
         const pendingPaths = new Set(this.pending.map(o => o.path));
         const changed = tree.filter(e => this.files[e.path] !== e.sha && !pendingPaths.has(e.path));
         const fetched: { path: string; text: string }[] = [];
@@ -178,9 +182,13 @@ class Store {
         const tasks = { ...this.state.tasks };
         let config = this.state.config;
         let events = this.state.events;
+        let budget: BudgetData = { recurring: this.state.budget.recurring, months: { ...this.state.budget.months } };
         for (const f of fetched) {
           if (f.path === CONFIG_PATH) { config = parseConfig(f.text); continue; }
           if (f.path === EVENTS_PATH) { try { const j = JSON.parse(f.text); events = Array.isArray(j.events) ? j.events : []; } catch { /* keep old */ } continue; }
+          if (f.path === RECURRING_PATH) { budget.recurring = parseRecurring(f.text); continue; }
+          const bm = f.path.match(MONTH_RE);
+          if (bm) { budget.months[bm[1]] = parseMonthBudget(bm[1], f.text); continue; }
           const t = parseTask(f.path, f.text);
           if (t) {
             // a task id can only live in one file; drop stale duplicates (e.g. after a rename)
@@ -195,7 +203,12 @@ class Store {
         this.files = files;
         this.headSha = head;
         if (!treePaths.has(EVENTS_PATH)) events = [];
-        this.emit({ tasks, config, events });
+        if (!treePaths.has(RECURRING_PATH) && !pendingPaths.has(RECURRING_PATH)) budget.recurring = [];
+        for (const m of Object.keys(budget.months)) {
+          const p = `budget/${m}.json`;
+          if (!treePaths.has(p) && !pendingPaths.has(p)) delete budget.months[m];
+        }
+        this.emit({ tasks, config, events, budget });
         this.setSync({ status: 'idle', lastPull: Date.now(), error: undefined });
         this.persist();
       } catch (e: any) {
@@ -313,6 +326,14 @@ class Store {
   setConfig(config: Config) {
     this.emit({ config });
     this.enqueue({ path: CONFIG_PATH, kind: 'put', content: serializeConfig(config), message: 'Update config' });
+  }
+  saveRecurring(recurring: RecurringBill[], message = 'Budget: recurring bills') {
+    this.emit({ budget: { ...this.state.budget, recurring } });
+    this.enqueue({ path: RECURRING_PATH, kind: 'put', content: JSON.stringify({ recurring }, null, 2) + '\n', message });
+  }
+  saveMonthBudget(mb: MonthBudget, message?: string) {
+    this.emit({ budget: { ...this.state.budget, months: { ...this.state.budget.months, [mb.month]: mb } } });
+    this.enqueue({ path: `budget/${mb.month}.json`, kind: 'put', content: JSON.stringify(mb, null, 2) + '\n', message: message ?? `Budget: ${mb.month}` });
   }
   putFile(path: string, content: string, message: string) { this.enqueue({ path, kind: 'put', content, message }); }
   get github() { return this.gh; }
